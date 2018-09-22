@@ -69,40 +69,51 @@ proc ::pd_connect::register_plugin_dispatch_receiver { nameatom callback } {
 }
 
 proc ::pd_connect::pd_readsocket {} {
-     variable pd_socket
-     variable cmds_from_pd
-     if {[eof $pd_socket]} {
-         # if we lose the socket connection, that means pd quit, so we quit
-         close $pd_socket
-         exit
-     } 
-     append cmds_from_pd [read $pd_socket]
-     if {[string index $cmds_from_pd end] ne "\n" || \
-             ![info complete $cmds_from_pd]} {
-         # the block is incomplete, wait for the next block of data
-         return
-     } else {
-         set docmds $cmds_from_pd
-         set cmds_from_pd ""
-         if {![catch {uplevel #0 $docmds} errorname]} {
-             # we ran the command block without error, reset the buffer
-         } else {
-             # oops, error, alert the user:
-             global errorInfo
-             switch -regexp -- $errorname {
-                 "missing close-brace" {
-                     ::pdwindow::fatal \
-                         [concat [_ "(Tcl) MISSING CLOSE-BRACE '\}': "] $errorInfo "\n"]
-                 } "^invalid command name" {
-                     ::pdwindow::fatal \
-                         [concat [_ "(Tcl) INVALID COMMAND NAME: "] $errorInfo "\n"]
-                 } default {
-                     ::pdwindow::fatal \
-                         [concat [_ "(Tcl) UNHANDLED ERROR: "] $errorInfo "\n"]
-                 }
-                 ::pdwindow::fatal \
-                     [concat [_ "(Tcl) COMMAND SOURCE CODE: "] $docmds "\n"]
-             }
-         }
-     }
+    variable pd_socket
+    variable cmds_from_pd
+    if {[eof $pd_socket]} {
+        # if we lose the socket connection, that means pd quit, so we quit
+        close $pd_socket
+        exit
+    }
+    append cmds_from_pd [read $pd_socket]
+    # execute all commands
+    set didcmds 1
+    while {$didcmds} {
+        set didcmds 0
+        # execute the shortest prefix of cmds_from_pd that is complete tcl
+        # find indices of line endings
+        set eols [lsearch -all [split $cmds_from_pd {}] "\n"]
+        # for each prefix pf cmds_from_pd ending in a newline, by increasing length
+        foreach eol $eols {
+            set docmds [string range $cmds_from_pd 0 $eol]
+            set rest   [string range $cmds_from_pd [expr $eol + 1] end]
+            if {[info complete $docmds]} {
+                # found a complete block, execute it
+                set cmds_from_pd $rest
+                set didcmds 1
+                if {![catch {uplevel #0 $docmds} errorname]} {
+                    # we ran the command block without error, reset the buffer
+                } else {
+                    # oops, error, alert the user:
+                    global errorInfo
+                    switch -regexp -- $errorname {
+                        "missing close-brace" {
+                            ::pdwindow::fatal \
+                                [concat [_ "(Tcl) MISSING CLOSE-BRACE '\}': "] $errorInfo "\n"]
+                        } "^invalid command name" {
+                            ::pdwindow::fatal \
+                                [concat [_ "(Tcl) INVALID COMMAND NAME: "] $errorInfo "\n"]
+                        } default {
+                            ::pdwindow::fatal \
+                                [concat [_ "(Tcl) UNHANDLED ERROR: "] $errorInfo "\n"]
+                        }
+                    }
+                    ::pdwindow::fatal \
+                        [concat [_ "(Tcl) COMMAND SOURCE CODE: "] $docmds "\n"]
+                }
+                break
+            }
+        }
+    }
 }
